@@ -9,8 +9,15 @@ import pandas as pd
 from utils.self_rag_tool import GradeAndGenerateRagTool
 
 # 初始化OpenAI API密钥
+# TODO: 替换为实际的API密钥
 os.environ['OPENAI_API_KEY'] = 'openai-api-key'
 
+"""
+优化方向:
+    1.对于某些标准化信息不通过大模型提取,可以代码手动提取
+    2.可在大模型基础上进行化学方向上的微调.如对反应优化,底物范围,反应的潜在应用研究等描述进行微调,使大模型对这些方向上的内容更加敏感.
+    3.可以使用自省RAG,对query进行重写.
+"""
 
 def load_pdf(file_path):
     """
@@ -103,7 +110,7 @@ def process_document(file_path, queries):
                 # 生成答案
                 answer = rag_tool.generate(query, text)
 
-                # 检查生成的回答是否基于文档
+                # 幻觉检查:检查生成的回答是否基于文档
                 hallucination_check = rag_tool.hallucinations(text, answer)
 
                 if hallucination_check == "no":

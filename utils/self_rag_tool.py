@@ -8,20 +8,33 @@ from dotenv import load_dotenv
 
 _ = load_dotenv()
 
+
 class GradedRagTool(BaseModel):
-    binary_score: str = Field(description="文档与问题的相关性. 'yes' or 'no'")
+    binary_score: str = Field(description="文档与问题的相关性: 'yes' or 'no'")
+
 
 class HallucinationsTool(BaseModel):
-    binary_score: str = Field(description="问题与回答的相关性. 'yes' or 'no'")
+    binary_score: str = Field(description="问题与回答的相关性: 'yes' or 'no'")
+
 
 class AnswerQuestionTool(BaseModel):
-    binary_score: str = Field(description="问题与回答的相关性. 'yes' or 'no'")
+    binary_score: str = Field(description="问题与回答的相关性: 'yes' or 'no'")
+
+
+"""
+实现自省RAG.
+
+该类用于根据相关性评分和生成回答，利用向量数据库进行检索，
+并通过预训练语言模型对检索结果进行评估和回答生成。
+"""
+
 
 class GradeAndGenerateRagTool(object):
     """
     该类用于根据相关性评分和生成回答，利用向量数据库进行检索，
     并通过预训练语言模型对检索结果进行评估和回答生成。
     """
+
     def __init__(self, faiss_index):
         """
         初始化FAISS索引、嵌入模型和语言模型，
@@ -29,11 +42,11 @@ class GradeAndGenerateRagTool(object):
         """
         self.faiss_index = faiss_index
         self.embeding = OpenAIEmbeddings()
+        # TODO: 配置model
         self.llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.5)
         self.struct_llm_grader = self.llm.with_structured_output(GradedRagTool)
         self.struct_llm_halluciation = self.llm.with_structured_output(HallucinationsTool)
         self.struct_llm_answer = self.llm.with_structured_output(AnswerQuestionTool)
-
 
     def embed_dim(self, text):
         """
@@ -59,7 +72,6 @@ class GradeAndGenerateRagTool(object):
             - distances (np.ndarray): 与输入问题最相似的文档的距离数组。
             - indices (np.ndarray): 与输入问题最相似的文档的索引数组。
         """
-
         # 将问题转换为向量表示
         query_vector = self.embed_dim(question)
         # 使用FAISS索引搜索最相似的文档
@@ -144,7 +156,7 @@ class GradeAndGenerateRagTool(object):
         result = self.struct_llm_answer.invoke(answer_question_message)
         return result.binary_score
 
-    def rewrite_answer(self, question):
+    def rewrite_question(self, question):
         """
         重写问题，使其更精确，便于后续检索。
 
