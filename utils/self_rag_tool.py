@@ -1,7 +1,8 @@
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic.v1 import BaseModel, Field
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from my_llm import llm
 
 import numpy as np
 from dotenv import load_dotenv
@@ -35,15 +36,14 @@ class GradeAndGenerateRagTool(object):
     并通过预训练语言模型对检索结果进行评估和回答生成。
     """
 
-    def __init__(self, faiss_index):
+    def __init__(self, chroma_collection):
         """
-        初始化FAISS索引、嵌入模型和语言模型，
+        初始化Chroma数据库、嵌入模型和语言模型，
         以及用于评分的相关配置。
         """
-        self.faiss_index = faiss_index
-        self.embeding = OpenAIEmbeddings()
-        # TODO: 配置model
-        self.llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.5)
+        self.chroma_collection = chroma_collection
+        self.embeding = HuggingFaceEmbeddings(model_name="./mxbai-embed-large-v1", model_kwargs={"device": "cpu"})
+        self.llm = llm
         self.struct_llm_grader = self.llm.with_structured_output(GradedRagTool)
         self.struct_llm_halluciation = self.llm.with_structured_output(HallucinationsTool)
         self.struct_llm_answer = self.llm.with_structured_output(AnswerQuestionTool)
@@ -56,30 +56,30 @@ class GradeAndGenerateRagTool(object):
         text (str): 输入的文本。
 
         返回:
-        np.array: 文本的嵌入表示。
+        list: 文本的嵌入表示作为列表。
         """
-        return np.array(self.embeding.embed_query(text)).astype(np.float32)
-
+        return self.embeding.embed_query(text)
     def search_vector(self, question):
         """
-        根据问题在FAISS索引中搜索相似的文档。
+        根据问题在Chroma数据库中搜索相似的文档。
 
         参数:
         question (str): 输入的问题。
 
         返回:
-        tuple: 一个元组，包含两个元素：
-            - distances (np.ndarray): 与输入问题最相似的文档的距离数组。
-            - indices (np.ndarray): 与输入问题最相似的文档的索引数组。
+        list[dict]: 包含最相似文档的元数据和文本。
         """
-        # 将问题转换为向量表示
-        query_vector = self.embed_dim(question)
-        # 使用FAISS索引搜索最相似的文档
-        # np.expand_dims(query_vector, axis=0) 将向量转换为形状为 (1, n_features) 的二维数组
-        # 这是因为FAISS期望一个二维数组作为输入
-        # k 是返回的最近邻的数量，默认为5，可以根据需要调整
-        distances, indices = self.faiss_index.search(np.expand_dims(query_vector, axis=0), k=5)  # Adjust k as needed
-        return distances, indices
+        # 将问题转换为向量
+        query_embedding = self.embed_dim(question)
+
+        # 在Chroma中进行相似度搜索
+        results = self.chroma_collection.similarity_search_by_vector(
+            query_embedding,
+            k=1  # 返回最相关的单个文档
+        )
+
+        # 返回最相似的文档
+        return results
 
     def grade(self, question, text):
         """

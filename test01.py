@@ -1,23 +1,19 @@
-from langchain.document_loaders import PyPDFLoader
-from langchain.chains import RetrievalQA
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain import OpenAI
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.vectorstores import Chroma
 import os
 import fnmatch
 import pandas as pd
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from utils.self_rag_tool import GradeAndGenerateRagTool
-
-# 初始化OpenAI API密钥
-# TODO: 替换为实际的API密钥
-os.environ['OPENAI_API_KEY'] = 'openai-api-key'
 
 """
 优化方向:
     1.对于某些标准化信息不通过大模型提取,可以代码手动提取
     2.可在大模型基础上进行化学方向上的微调.如对反应优化,底物范围,反应的潜在应用研究等描述进行微调,使大模型对这些方向上的内容更加敏感.
     3.可以使用自省RAG,对query进行重写.
+    4.可持久化向量数据库.
 """
+
 
 def load_pdf(file_path):
     """
@@ -31,32 +27,23 @@ def load_pdf(file_path):
     return documents
 
 
-def create_vectorstore(documents):
+def create_vectorstore(documents, persist_directory="./chroma_db"):
     """
-    根据加载的文档创建Milvus向量数据库。
+    根据加载的文档创建Chroma向量数据库。
 
     :param documents: 加载的文档列表
-    :return: Milvus向量数据库
+    :param persist_directory: 向量数据库持久化目录
+    :return: Chroma向量数据库
     """
-    embeddings = OpenAIEmbeddings()
-    vectorstore = FAISS.from_documents(documents, embeddings)
-    return vectorstore
+    # 加载本地预训练的embedding模型
+    embeddings = HuggingFaceEmbeddings(model_name="./mxbai-embed-large-v1", model_kwargs={"device": "cpu"})
 
-
-def extract_information(query, vectorstore):
-    """
-    从向量数据库中提取信息。
-
-    :param query: 查询文本
-    :param vectorstore: 向量数据库
-    :return: 提取的信息
-    """
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=OpenAI(),
-        retriever=vectorstore.as_retriever()
+    vectorstore = Chroma.from_documents(
+        documents,
+        embeddings,
+        persist_directory=persist_directory
     )
-    result = qa_chain.run(query)
-    return result
+    return vectorstore
 
 
 def find_pdf_files(root_dir):
@@ -85,10 +72,8 @@ def validate_pdf_file(file_path):
 
 def process_document(file_path, queries):
     '''
-    TODO:
     :param file_path:
     :param queries:
-    :param rag_tool:
     :return:
     '''
     documents = load_pdf(file_path)
@@ -102,7 +87,7 @@ def process_document(file_path, queries):
         search_results = rag_tool.search_vector(query)
 
         for result in search_results:
-            text = result["text"]
+            text = result.page_content  # 更改这一行来正确访问文本内容
             # 评分文档与问题的相关性
             relevance_score = rag_tool.grade(query, text)
 
@@ -122,7 +107,6 @@ def process_document(file_path, queries):
                         break
 
     return extracted_info
-
 
 def create_output_directory(pdf_path):
     """ 创建输出目录。"""
@@ -154,6 +138,8 @@ def write_to_csv(extracted_info, file_path, keys, seq_num, output_dir):
     df.to_csv(csv_file_path, mode='a', index=False, header=not os.path.exists(csv_file_path))
 
 
+
+
 def main():
     # PDF文件的主路径
     directory = './ShuLiYou'
@@ -166,26 +152,26 @@ def main():
 
     # 定义查询摘要、正文等
     queries = {
-        "title": "提取论文标题",
-        "label": "提取论文的标签,或者关键词",
-        "authors": "提取论文的作者。如:Juanjuan Wang,Hong Lu,Yi He,Chunxiu Jing,Hao Wei*",
-        "journal": "提取论文所属的期刊。如: Journal of the American Chemical Society",
-        "year": "提取论文发表年份。如:2022",
-        "doi": "提取论文的DOI。如: 10.1021/jacs.2c10570",
-        "vol": "提取论文的卷,如: 144",
-        "issue": "提取论文的期,如:第49期",
-        "pages": "提取论文的页码。如:22433-22439",
+        "title": "Extract the title of the paper",
+        "label": "Extract the tags, or keywords, of the paper",
+        "authors": "Extract the author of the paper. For example: Juanjuan Wang,Hong Lu,Yi He,Chunxiu Jing,Hao Wei*",
+        "journal": "Extract the journal to which the paper belongs. For example: Journal of the American Chemical Society",
+        "year": "Extract the year the paper was published. Such as:2022",
+        "doi": "Extract the DOI of the paper. Such as: 10.1021/jacs.2c10570",
+        "vol": "Extract a volume of papers, such as: 144",
+        "issue": "Extract the period of the paper, for example: Issue 49",
+        "pages": "Extract the page number of the paper. For example, 22433-22439",
 
-        "abstract": "提取文档的摘要。提取文献的概要内容，如发现、策略、结果、解决了什么问题",
+        "abstract": "Extract a summary of the document. Extract the summary content of the literature, such as findings, strategies, results, what problems were solved",
 
-        "project_development": "课题的发展历程和示例，本工作研究目的或推论的提出，可能会提出创新点，如应用什么新策略，解决了什么问题。",
-        "reaction": "反应优化（或条件筛选），描述哪些因素对反应的哪些结果产生影响。如催化剂、配体、添加剂、溶剂、温度、时间、空气、水等，对反应产率或选择性产生哪些影响",
-        "sub_range": "底物范围，描述反应对各类底物的适用性，官能团耐受性，不同底物对产率、选择性的影响。通常会增加生物活性分子、药物分子或其衍生物的反应示例，以表明潜在应用性",
-        "potential_app_reaction": "反应的潜在应用研究，展示应用示例。通常展示诸如反应量级（如克级）放大后的结果、简化了某类重要分子的合成、制备多样分子的可能性等",
-        "mechanism_study": "机理研究，机理的推导和研究的逻辑、结果。如进行了什么实验，为了验证什么问题，实验结果如何，得到什么结论",
-        "mechanism_study_conclusion": "机理研究的结论，描述反应可能经历的历程。如反应如何引发，产生了哪些关键中间体，是否有实验证明了该推论。",
+        "project_development": "The development history and examples of the current topic of the paper are extracted, and the proposal of the research purpose or inference of this work may suggest innovative points, such as what new strategies are applied and what problems are solved.",
+        "reaction": "Extract the response optimization (or conditional screening) of the current paper, describing which factors have an impact on which outcomes of the response. Such as catalysts, ligands, additives, solvents, temperature, time, air, water, etc. on the reaction yield or selectivity",
+        "sub_range": "Extract the substrate range of the current paper, describe the applicability of the reaction to various substrates, functional group tolerance, and the influence of different substrates on yield and selectivity. Examples of reactions of bioactive molecules, drug molecules, or their derivatives are often added to indicate potential applications",
+        "potential_app_reaction": "Extract potential applied research responses from current papers and present application examples. Results such as amplification of the reaction magnitude (e.g., gram), simplification of the synthesis of an important class of molecules, and the possibility of preparing a variety of molecules are usually shown",
+        "mechanism_study": "Extract the mechanism research of the current paper, the derivation of the mechanism and the logic and results of the research. If what experiments were conducted, what questions were tested, what were the results of the experiments, and what conclusions were drawn",
+        "mechanism_study_conclusion": "The conclusions of the mechanism studies in the current papers are extracted and the possible course of the reaction is described. Such as how the reaction is initiated, what key intermediates are produced, and whether there are experiments to prove the inference.",
 
-        "summary": "提取文档的总结。",
+        "summary": "Extract the summary of the current paper.",
     }
 
     # 处理PDF文件
@@ -207,7 +193,8 @@ def main():
         write_to_csv(extracted_info, 'sub_range.csv', ['sub_range'], seq_num, output_dir)
         write_to_csv(extracted_info, 'potential_app_reaction.csv', ['potential_app_reaction'], seq_num, output_dir)
         write_to_csv(extracted_info, 'mechanism_study.csv', ['mechanism_study'], seq_num, output_dir)
-        write_to_csv(extracted_info, 'mechanism_study_conclusion.csv', ['mechanism_study_conclusion'], seq_num, output_dir)
+        write_to_csv(extracted_info, 'mechanism_study_conclusion.csv', ['mechanism_study_conclusion'], seq_num,
+                     output_dir)
         write_to_csv(extracted_info, 'summary.csv', ['summary'], seq_num, output_dir)
 
         # 输出提取的信息
