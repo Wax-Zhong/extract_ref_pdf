@@ -9,7 +9,7 @@ temperature：设置生成文本的随机性程度为0，值越高输出越随�
 """
 llm = ChatOpenAI(
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    api_key="sk-46918778e42746498939ce47a7a01ce9",
+    api_key="add_api_key",
     model="qwen2-72b-instruct",
     temperature=0,
 )
